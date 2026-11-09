@@ -47,8 +47,8 @@ var Game=(function(){
     if(m==='ai'||m==='friend'){
       if(G.over){var me=G.winner===G.player;setStatus(G.winner===-1?'和棋（'+(G.drawWhy||'')+'）':me?'🎉 你贏了！':(G.resigned?'你認輸了':'你輸了'),G.endInfo||'','over');}
       else if(G.thinking)setStatus(m==='ai'?'電腦思考中…':'等待對手…',G.coach?'教練：'+(G.coachBusy?'分析中':'待命'):'');
-      else if(G.side===G.player)setStatus(inCheck(G.b,G.side)?'將軍！快應將':'輪到你下（'+sideName(G.player)+'）',G.coach?(G.coachBusy?'教練分析中…':''):(G.rated?'正式對局':''),inCheck(G.b,G.side)?'check':'');
-      else setStatus(m==='friend'?'等待對手走棋…':'輪到電腦','');
+      else if(G.side===G.player)setStatus(inCheck(G.b,G.side)?'將軍！快應將':'輪到你下（'+sideName(G.player)+'）',G.coach?(G.coachBusy?'教練分析中…':''):(m==='friend'&&G.lat?'延遲 '+G.lat.toFixed(1)+' 秒':(G.rated?'正式對局':'')),inCheck(G.b,G.side)?'check':'');
+      else setStatus(m==='friend'?'等待對手走棋…':'輪到電腦',m==='friend'&&G.lat?'延遲 '+G.lat.toFixed(1)+' 秒':'');
     }else if(m==='puzzle'){setStatus(G.pzMsg||((sideName(G.player))+'先，'+G.pz.n+' 步殺'),G.pzInfo||'',G.pzCls||'');}
     else if(m==='replay'){var k=viewPly;setStatus(k===0?'開局':moveNoLabel(k-1,G.startSide)+' '+sideName((k-1+G.startSide)%2)+'方',G.guess?'猜中 '+G.guessOk+'/'+G.guessN:(k+'/'+G.moves.length));}
     else if(m==='review'){setStatus(G.reviewBusy?'復盤分析中…':'復盤',(viewPly||0)+'/'+G.moves.length);}
@@ -417,8 +417,10 @@ var Game=(function(){
     panel('<div class="note sub">連線中…</div>');render();
     unsub=Online.watchRoom(id,onRoom,function(e){panel('<div class="note">無法讀取對局：'+esc(e.message)+'</div>');});
   }
-  function onRoom(r){
+  function onRoom(r,meta){
     if(!G||G.mode!=='friend')return;
+    if(r&&meta&&!meta.pending&&G.sentAt&&r.moves&&r.moves.length===G.sentLen){G.lat=(performance.now()-G.sentAt)/1000;G.sentAt=0;}
+    if(r&&meta&&meta.pending&&r.moves&&r.moves.length===G.moves.length&&r.status===G.roomStatus)return;
     if(!r){panel('<div class="note">找不到這個對局。</div>');return;}
     var uid=Online.uid;
     if(r.status==='waiting'&&r.red!==uid&&r.black!==uid){Online.joinRoom(G.room).catch(function(e){toast('加入失敗：'+e.message);});return;}
@@ -445,8 +447,8 @@ var Game=(function(){
   function friendMove(m){
     var len=G.moves.length,tok=G.tok;push(m);
     var end=null;if(G.over)end={result:G.winner===0?'red':G.winner===1?'black':'draw',reason:G.winner===-1?'repeat':'mate'};
-    G.over=false;render();
-    Online.sendMove(G.room,m,len,end).catch(function(e){toast('送出失敗：'+e.message);});
+    G.over=false;G.sentAt=performance.now();G.sentLen=len+1;render();
+    Online.sendMove(G.room,m,len,end,G.moves.slice()).catch(function(e){toast('送出失敗，重新同步：'+e.message);var id=G.room;startFriend(id);});
   }
   function friendEnd(r){
     if(G.spectator||P.friendDone&&P.friendDone[G.room])return;

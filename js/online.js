@@ -71,16 +71,12 @@ var Online={ready:false,uid:null,reason:''};
       if(!r.red){up.red=Online.uid;up.redName=P.name;up.redRating=P.rating;}else if(!r.black){up.black=Online.uid;up.blackName=P.name;up.blackRating=P.rating;}else throw new Error('對局已滿');
       tx.update(ref,up);});});
   };
-  Online.watchRoom=function(id,cb,err){return fs.onSnapshot(fs.doc(db,'rooms',id),function(s){cb(s.exists()?Object.assign({id:id},s.data()):null);},err);};
-  Online.sendMove=function(id,m,len,end){
-    var ref=fs.doc(db,'rooms',id);
-    return fs.runTransaction(db,function(tx){return tx.get(ref).then(function(s){
-      var r=s.data();if(r.status!=='playing')throw new Error('對局未進行');
-      if(r.moves.length!==len)throw new Error('棋局不同步，請重新整理');
-      if((len%2===0?r.red:r.black)!==Online.uid)throw new Error('還沒輪到你');
-      var up={moves:r.moves.concat([m]),drawOffer:null,updated:fs.serverTimestamp()};
-      if(end){up.status='done';up.result=end.result;up.reason=end.reason;}
-      tx.update(ref,up);});});
+  Online.watchRoom=function(id,cb,err){return fs.onSnapshot(fs.doc(db,'rooms',id),{includeMetadataChanges:true},function(s){cb(s.exists()?Object.assign({id:id},s.data()):null,{pending:s.metadata.hasPendingWrites,cache:s.metadata.fromCache});},err);};
+  /* single direct write (no transaction): one network round trip */
+  Online.sendMove=function(id,m,len,end,all){
+    var up={moves:all,drawOffer:null,updated:fs.serverTimestamp()};
+    if(end){up.status='done';up.result=end.result;up.reason=end.reason;}
+    return fs.updateDoc(fs.doc(db,'rooms',id),up);
   };
   Online.resign=function(id){var ref=fs.doc(db,'rooms',id);
     return fs.runTransaction(db,function(tx){return tx.get(ref).then(function(s){var r=s.data();if(r.status!=='playing')return;tx.update(ref,{status:'done',result:r.red===Online.uid?'black':'red',reason:'resign',updated:fs.serverTimestamp()});});});};
