@@ -1,5 +1,5 @@
 /* ===== app core: storage, router, engine client, list screens ===== */
-var APP_VERSION='v1.3';
+var APP_VERSION='v1.4',APP_DATE='2026-11-10';
 var $=function(id){return document.getElementById(id);};
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function toast(t){var el=$('toast');el.textContent=t;el.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(function(){el.classList.remove('on');},2200);}
@@ -65,18 +65,13 @@ function renderHome(){
   $('profileCard').innerHTML='<div class="name">'+(esc(P.name)||'訪客')+'</div><div class="rt">'+rt+'</div><div class="sub">Rating・正式對局 '+P.games+' 盤（'+P.wins+' 勝 '+P.losses+' 負 '+P.draws+' 和）</div>';
   $('meChip').textContent=P.name?P.name+' '+rt:'';
   var rec=recommend();$('lessonHint').textContent=rec.length?'推薦：'+rec[0].title:'程度測驗・個人化推薦';
-  $('onlineState').innerHTML=esc(window.Online&&Online.ready?'已連線：英雄榜與好友對戰可用':(window.Online&&Online.reason?Online.reason:'離線模式'))+'<div class="ver">象棋道場 '+APP_VERSION+'</div>';
+  $('onlineState').innerHTML=esc(window.Online&&Online.ready?'已連線：英雄榜與好友對戰可用':(window.Online&&Online.reason?Online.reason:'離線模式'))+'<div class="ver">象棋道場 '+APP_VERSION+'（'+APP_DATE+' 更新）</div>';
   var oc=$('onlineChip');if(window.Online&&Online.ready&&Online.onlineUsers){oc.style.display='flex';oc.innerHTML='<span class="dot"></span>目前在線…';
     Online.onlineUsers().then(function(l){oc.innerHTML='<span class="dot"></span>目前在線 '+l.length+' 人　<span style="font-weight:400;font-size:15px">點我看名單 ›</span>';}).catch(function(){oc.style.display='none';});}else oc.style.display='none';
-  if(window.Online&&Online.ready&&Online.anon&&P.name&&Online.register){oc.insertAdjacentHTML('afterend','');var bb=$('bindBanner');
-    if(!bb){bb=document.createElement('button');bb.id='bindBanner';bb.className='online-chip';bb.style.cssText='background:#fff4e8;border-color:#f0b27a;color:#8a4b00';oc.parentNode.insertBefore(bb,oc.nextSibling);}
-    bb.style.display='flex';bb.innerHTML='🔐 設定密碼綁定帳號，換手機也能登入 ›';bb.onclick=function(){askAccount(renderHome,'bind');};}
-  else{var b2=$('bindBanner');if(b2)b2.style.display='none';}
   if(!P.name)askName();
 }
 /* first visit / login: account (nickname + password) when online is configured; nickname only when offline */
 function askName(cb){
-  if(window.FIREBASE_CONFIG&&window.Online&&Online.register){askAccount(cb);return;}
   askNickOnly(cb);
 }
 function askAccount(cb,mode){
@@ -104,7 +99,7 @@ function askAccount(cb,mode){
   var gu=$('acGuest');if(gu)gu.onclick=function(){askNickOnly(cb);};
 }
 function askNickOnly(cb){
-  sheet('<h2>你的暱稱</h2><p class="sub" style="color:#8a7458;font-size:13px">會顯示在英雄榜和好友對戰中（最多 12 字）</p><input type="text" id="nameIn" maxlength="12" value="'+esc(P.name)+'" placeholder="例如：善化棋王"><button class="big primary" id="nameOk">確定</button>');
+  sheet('<h2>你的暱稱</h2><p class="sub" style="color:#8a7458;font-size:16px">會顯示在英雄榜和好友對戰中（最多 12 字）。同一支手機下次打開會自動記住。</p><input type="text" id="nameIn" maxlength="12" value="'+esc(P.name)+'" placeholder="例如：善化棋王"><button class="big primary" id="nameOk">確定</button>');
   $('nameOk').onclick=function(){var v=$('nameIn').value.trim().slice(0,12);if(!v){toast('請輸入暱稱');return;}P.name=v;saveP();closeSheet();renderHome();if(cb)cb();};
 }
 
@@ -261,14 +256,14 @@ function renderFriend(){
     $('myRooms').querySelectorAll('[data-room]').forEach(function(b){b.onclick=function(){Game.startFriend(b.getAttribute('data-room'));};});}).catch(function(){$('myRooms').innerHTML='';});
 }
 function renderProfile(){
-  var on=window.Online&&Online.ready,acct='';
+  var on=false,acct='';
   if(on)acct=Online.anon?'<button class="item" id="pBind"><span class="t"><b>訪客帳號（只存在這台手機）</b><small>設定密碼後，換手機也能登入，分數不會遺失</small></span><span class="badge">綁定</span></button>'
     :'<div class="item"><span class="t"><b>帳號：'+esc(P.name)+'</b><small>已綁定，在任何手機用暱稱＋密碼登入即可</small></span><span class="badge done">已登入</span></div>';
   if(on)acct+='<button class="item" id="pLogin"><span class="t"><b>'+(Online.anon?'登入其他帳號':'登出／切換帳號')+'</b><small>'+(Online.anon?'已經有帳號了？':'換別人使用這台手機')+'</small></span><span class="badge">'+(Online.anon?'登入':'登出')+'</span></button>';
   $('profileBox').innerHTML='<div class="list">'+acct+(on&&!Online.anon?'':'<button class="item" id="pName"><span class="t"><b>暱稱</b><small>'+(esc(P.name)||'未設定')+'</small></span><span class="badge">修改</span></button>')+
    '<button class="item" id="pExport"><span class="t"><b>複製最近一盤棋譜</b><small>貼給 Claude 可以深入講解</small></span><span class="badge">複製</span></button>'+
    '<button class="item" id="pReset"><span class="t"><b>清除本機資料</b><small>Rating、紀錄、課程進度</small></span><span class="badge">清除</span></button></div>'+
-   '<p class="foot">版本 '+APP_VERSION+'<br>'+(window.Online&&Online.ready?'已連線（ID：'+Online.uid.slice(0,6)+'…）':esc(window.Online&&Online.reason||'離線模式'))+'</p>';
+   '<p class="foot">版本 '+APP_VERSION+'（'+APP_DATE+' 更新）<br>'+(window.Online&&Online.ready?'已連線（ID：'+Online.uid.slice(0,6)+'…）':esc(window.Online&&Online.reason||'離線模式'))+'</p>';
   var pn=$('pName');if(pn)pn.onclick=function(){askNickOnly(renderProfile);};
   var pb=$('pBind');if(pb)pb.onclick=function(){askAccount(renderProfile,'bind');};
   var pl=$('pLogin');if(pl)pl.onclick=function(){if(Online.anon)askAccount(renderProfile,'login');else{Online.logout().then(function(){toast('已登出');go('home');});}};

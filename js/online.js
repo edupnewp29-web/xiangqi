@@ -13,7 +13,6 @@ Online.whenReady=new Promise(function(res){Online._ready=res;});
       if(!u){Online.ready=false;authM.signInAnonymously(auth).catch(function(e){Online.reason='登入失敗：'+e.message;refresh();});return;}
       if(Online.ready&&Online.uid===u.uid){Online.anon=u.isAnonymous;return;}
       /* a different account on this browser: start from a clean local profile */
-      if(P.uid&&P.uid!==u.uid){var keep=P.setup;P=defaultProfile();P.setup=keep;}
       P.uid=u.uid;Online.uid=u.uid;Online.anon=u.isAnonymous;
       loadProfile().then(function(){Online.ready=true;Online.reason='';Online.ping('idle');
         if(!started){started=true;setInterval(function(){Online.ping();},60000);}

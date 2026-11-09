@@ -20,6 +20,7 @@ var Game=(function(){
   /* ---------- rendering ---------- */
   function render(){
     if(!G)return;
+    var gv=$('gameVer');if(gv)gv.textContent='象棋道場 '+APP_VERSION+'（'+APP_DATE+' 更新）';
     bv.flip=G.player===1;
     var ply=viewPly===null?G.moves.length:viewPly,pos=viewPly===null?{b:G.b,side:G.side}:posAt(viewPly);
     var arrows=G.arrows.slice();
