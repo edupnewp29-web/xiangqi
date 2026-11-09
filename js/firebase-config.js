@@ -1,13 +1,9 @@
-/* 把 Firebase 主控台「專案設定 → 你的應用程式 → SDK 設定」裡的 firebaseConfig 貼在這裡。
-   沒有設定時，遊戲仍可離線使用（英雄榜與好友對戰除外）。 */
-window.FIREBASE_CONFIG = null;
-/* 範例：
+/* Firebase 專案 xiangqi 的設定（apiKey 是公開識別碼，資料安全由 firestore.rules 控管） */
 window.FIREBASE_CONFIG = {
-  apiKey: "AIza...",
-  authDomain: "xiangqi-xxxx.firebaseapp.com",
-  projectId: "xiangqi-xxxx",
-  storageBucket: "xiangqi-xxxx.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "1:123456789:web:abcdef"
+  apiKey: "AIzaSyBGV1IyDc-iZ4Sd2brg1SS-XJ9Np1l04qw",
+  authDomain: "xiangqi-ec1cf.firebaseapp.com",
+  projectId: "xiangqi-ec1cf",
+  storageBucket: "xiangqi-ec1cf.firebasestorage.app",
+  messagingSenderId: "224131839053",
+  appId: "1:224131839053:web:fa169685de8ea5003dd804"
 };
-*/
