@@ -9,7 +9,7 @@ var Online={ready:false,uid:null,reason:''};
     var app=m[0].initializeApp(cfg);authM=m[1];auth=authM.getAuth(app);fs=m[2];db=fs.getFirestore(app);
     authM.onAuthStateChanged(auth,function(u){
       if(!u){authM.signInAnonymously(auth).catch(function(e){Online.reason='登入失敗：'+e.message;refresh();});return;}
-      Online.uid=u.uid;loadProfile().then(function(){Online.ready=true;refresh();}).catch(function(e){Online.reason='讀取資料失敗：'+e.message;refresh();});
+      Online.uid=u.uid;loadProfile().then(function(){Online.ready=true;Online.ping('idle');setInterval(function(){Online.ping();},60000);listenInvites();refresh();}).catch(function(e){Online.reason='讀取資料失敗：'+e.message;refresh();});
     });
   }).catch(function(e){Online.reason='無法載入線上功能（請使用 GitHub 網址開啟）';refresh();});
 
@@ -31,6 +31,28 @@ var Online={ready:false,uid:null,reason:''};
       var out=[];q.forEach(function(d){var x=d.data();if((x.games||0)>0||d.id===Online.uid){x.id=d.id;out.push(x);}});return out;});
   };
   Online.myGames=function(){return fs.getDocs(fs.query(fs.collection(db,'games'),fs.where('uid','==',Online.uid),fs.limit(100))).then(function(q){var o=[];q.forEach(function(d){o.push(d.data());});return o;});};
+
+  /* ----- presence & invites ----- */
+  var lastStatus='idle';
+  Online.ping=function(st){if(st)lastStatus=st;if(!P.name)return;fs.setDoc(uref(),{name:P.name,rating:P.rating,lastSeen:fs.serverTimestamp(),status:lastStatus},{merge:true}).catch(function(e){console.warn('ping',e.message);});};
+  document.addEventListener('visibilitychange',function(){if(!document.hidden&&Online.ready)Online.ping();});
+  Online.onlineUsers=function(){
+    var since=fs.Timestamp.fromMillis(Date.now()-3*60*1000);
+    return fs.getDocs(fs.query(fs.collection(db,'users'),fs.where('lastSeen','>=',since))).then(function(q){var o=[];q.forEach(function(d){var x=d.data();x.id=d.id;o.push(x);});
+      o.sort(function(a,b){return (a.id===Online.uid?-1:b.id===Online.uid?1:0)||(b.rating-a.rating);});return o;});
+  };
+  Online.invite=function(target){
+    return Online.createRoom(0).then(function(room){return fs.setDoc(fs.doc(db,'invites',target),{from:Online.uid,fromName:P.name,room:room,ts:fs.serverTimestamp()}).then(function(){return room;});});
+  };
+  Online.clearInvite=function(){return fs.deleteDoc(fs.doc(db,'invites',Online.uid)).catch(function(){});};
+  var seenInv={};
+  function listenInvites(){
+    fs.onSnapshot(fs.doc(db,'invites',Online.uid),function(s){
+      if(!s.exists())return;var d=s.data();if(!d.room||seenInv[d.room])return;
+      var t=d.ts&&d.ts.toMillis?d.ts.toMillis():Date.now();if(Date.now()-t>10*60*1000)return;
+      seenInv[d.room]=1;if(typeof showInvite==='function')showInvite(d);
+    },function(e){console.warn('invites',e.message);});
+  }
 
   /* ----- rooms ----- */
   function rid(){var c='abcdefghjkmnpqrstuvwxyz23456789',s='';for(var i=0;i<8;i++)s+=c[Math.floor(Math.random()*c.length)];return s;}

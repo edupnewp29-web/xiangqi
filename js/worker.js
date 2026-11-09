@@ -1,4 +1,4 @@
-importScripts('engine.js');
+importScripts('engine.js'+(self.location.search||''));
 self.onmessage=function(e){
   var d=e.data,r;
   if(d.cmd==='think')r=think(d.board,d.side,d.opts);

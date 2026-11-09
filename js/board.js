@@ -31,7 +31,7 @@ BoardView.prototype.render=function(st){
   var self=this,s='',b=st.board,i;
   /* file numbers along the edges */
   var fs='';for(var c=0;c<9;c++){var x=60+c*100;
-    fs+='<text x="'+x+'" y="-12" font-size="24" text-anchor="middle" fill="#8a6235">'+(this.flip?CN_NUM[c+1]:FW_NUM[c+1])+'</text><text x="'+x+'" y="1056" font-size="24" text-anchor="middle" fill="#8a6235">'+(this.flip?FW_NUM[9-c]:CN_NUM[9-c])+'</text>';}
+    fs+='<text x="'+x+'" y="-10" font-size="30" text-anchor="middle" fill="#8a6235">'+(this.flip?CN_NUM[c+1]:FW_NUM[c+1])+'</text><text x="'+x+'" y="1060" font-size="30" text-anchor="middle" fill="#8a6235">'+(this.flip?FW_NUM[9-c]:CN_NUM[9-c])+'</text>';}
   this.files.innerHTML=fs;
   if(st.last){var a=this.xy(st.last>>7);s+='<circle cx="'+a[0]+'" cy="'+a[1]+'" r="16" fill="rgba(21,101,192,.45)"/>';}
   var ck=st.check?findKing(b,st.side):-1;
@@ -39,7 +39,7 @@ BoardView.prototype.render=function(st){
     s+='<g transform="translate('+xy[0]+','+xy[1]+')">';
     if(i===ck)s+='<circle r="54" fill="rgba(211,47,47,.4)"/>';
     s+='<circle r="44" cy="4" fill="rgba(60,30,10,.35)"/><circle r="44" fill="url(#pg)" stroke="#8a5a2b" stroke-width="3"/><circle r="36" fill="none" stroke="'+col+'" stroke-width="2.5"/>';
-    s+='<text y="18" font-size="50" text-anchor="middle" fill="'+col+'" class="kai" font-weight="700">'+pieceName(p)+'</text>';
+    s+='<text y="20" font-size="58" text-anchor="middle" fill="'+col+'" class="kai" font-weight="700">'+pieceName(p)+'</text>';
     if(st.last&&i===(st.last&127))s+='<circle r="48" fill="none" stroke="#1565c0" stroke-width="5"/>';
     if(i===st.sel)s+='<circle r="49" fill="none" stroke="#2e7d32" stroke-width="7"/>';
     s+='</g>';}

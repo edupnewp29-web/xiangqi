@@ -20,6 +20,12 @@ service cloud.firestore {
       allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
     }
 
+    // 對戰邀請：任何登入者都可以邀請別人；只有被邀請者能讀取／刪除
+    match /invites/{uid} {
+      allow read, delete: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null && request.resource.data.from == request.auth.uid;
+    }
+
     // 好友對戰房間
     match /rooms/{id} {
       allow read: if request.auth != null;

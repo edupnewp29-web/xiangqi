@@ -1,4 +1,5 @@
 /* ===== app core: storage, router, engine client, list screens ===== */
+var APP_VERSION='v1.1';
 var $=function(id){return document.getElementById(id);};
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function toast(t){var el=$('toast');el.textContent=t;el.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(function(){el.classList.remove('on');},2200);}
@@ -34,7 +35,7 @@ function addRecord(rec){
 function Eng(){this.w=null;this.cb={};this.id=0;this.fail=false;}
 Eng.prototype.get=function(){
   if(this.w||this.fail)return this.w;var s=this;
-  try{this.w=new Worker('js/worker.js');this.w.onmessage=function(e){var c=s.cb[e.data.id];delete s.cb[e.data.id];if(c)c(e.data);};this.w.onerror=function(){s.fail=true;s.w=null;};}
+  try{this.w=new Worker('js/worker.js?v='+APP_VERSION);this.w.onmessage=function(e){var c=s.cb[e.data.id];delete s.cb[e.data.id];if(c)c(e.data);};this.w.onerror=function(){s.fail=true;s.w=null;};}
   catch(e){this.fail=true;this.w=null;}
   return this.w;
 };
@@ -45,14 +46,15 @@ Eng.prototype.reset=function(){if(this.w){this.w.terminate();this.w=null;}var cb
 var aiEng=new Eng(),coachEng=new Eng();
 
 /* ----- router ----- */
-var TITLES={home:'象棋道場',setup:'對弈電腦',game:'對局',lessons:'我的課程',lesson:'課程',puzzles:'殺法練習',classics:'名局欣賞',rank:'英雄榜',records:'我的戰績',friend:'好友對戰',profile:'設定'};
+var TITLES={home:'象棋道場',setup:'對弈電腦',game:'對局',lessons:'我的課程',lesson:'課程',puzzles:'殺法練習',classics:'名局欣賞',rank:'英雄榜',records:'我的戰績',friend:'好友對戰',profile:'設定',online:'線上玩家'};
 var curView='home';
 function go(v,title){
   curView=v;document.querySelectorAll('.view').forEach(function(el){el.classList.toggle('on',el.id==='v-'+v);});
   $('title').textContent=title||TITLES[v]||'象棋道場';$('backBtn').style.visibility=v==='home'?'hidden':'visible';
   window.scrollTo(0,0);
   if(v==='home')renderHome();else if(v==='setup')renderSetup();else if(v==='lessons')renderLessons();else if(v==='puzzles')renderPuzzles();
-  else if(v==='classics')renderClassics();else if(v==='records')renderRecords();else if(v==='rank')renderRank();else if(v==='friend')renderFriend();else if(v==='profile')renderProfile();
+  else if(v==='classics')renderClassics();else if(v==='records')renderRecords();else if(v==='rank')renderRank();else if(v==='friend')renderFriend();else if(v==='profile')renderProfile();else if(v==='online')renderOnline();
+  if(window.Online&&Online.ready&&Online.ping)Online.ping(v==='game'?'playing':'idle');
   try{if(v!=='game'&&v!=='lesson'&&location.hash!=='#'+v)history.replaceState(null,'','#'+v);}catch(e){}
 }
 $('backBtn').onclick=function(){if(curView==='game'&&window.Game)Game.leave();else if(curView==='lesson')go('lessons');else go('home');};
@@ -63,7 +65,9 @@ function renderHome(){
   $('profileCard').innerHTML='<div class="name">'+(esc(P.name)||'訪客')+'</div><div class="rt">'+rt+'</div><div class="sub">Rating・正式對局 '+P.games+' 盤（'+P.wins+' 勝 '+P.losses+' 負 '+P.draws+' 和）</div>';
   $('meChip').textContent=P.name?P.name+' '+rt:'';
   var rec=recommend();$('lessonHint').textContent=rec.length?'推薦：'+rec[0].title:'程度測驗・個人化推薦';
-  $('onlineState').textContent=window.Online&&Online.ready?'已連線：英雄榜與好友對戰可用':(window.Online&&Online.reason?Online.reason:'離線模式');
+  $('onlineState').innerHTML=esc(window.Online&&Online.ready?'已連線：英雄榜與好友對戰可用':(window.Online&&Online.reason?Online.reason:'離線模式'))+'<div class="ver">象棋道場 '+APP_VERSION+'</div>';
+  var oc=$('onlineChip');if(window.Online&&Online.ready&&Online.onlineUsers){oc.style.display='flex';oc.innerHTML='<span class="dot"></span>目前在線…';
+    Online.onlineUsers().then(function(l){oc.innerHTML='<span class="dot"></span>目前在線 '+l.length+' 人　<span style="font-weight:400;font-size:15px">點我看名單 ›</span>';}).catch(function(){oc.style.display='none';});}else oc.style.display='none';
   if(!P.name)askName();
 }
 function askName(cb){
@@ -181,6 +185,29 @@ function renderRecords(){
   $('recordsBox').querySelectorAll('[data-rec]').forEach(function(b){b.onclick=function(){Game.reviewRecord(P.records[+b.getAttribute('data-rec')]);};});
 }
 
+/* ----- who is online ----- */
+function renderOnline(){
+  if(!window.Online||!Online.ready){$('onlineBox').innerHTML='<div class="note">需要連線才能看到線上玩家。</div>';return;}
+  if(!P.name){askName(renderOnline);return;}
+  $('onlineBox').innerHTML='<div class="note sub">載入中…</div>';
+  Online.onlineUsers().then(function(list){
+    var h='<div class="note sub">最近 3 分鐘內開著象棋道場的玩家。點「邀請對戰」，對方手機會跳出邀請。</div><div class="list">';
+    list.forEach(function(u){var me=u.id===Online.uid,busy=u.status==='playing';
+      h+='<div class="item"><span class="dot'+(busy?' busy':'')+'"></span><span class="t"><b>'+esc(u.name)+(me?'（你）':'')+'</b><small>Rating '+u.rating+'・'+(busy?'對局中':'閒置中')+'</small></span>'+(me?'':'<button class="btn primary" style="flex:none;padding:8px 12px" data-inv="'+u.id+'" data-n="'+esc(u.name)+'">邀請對戰</button>')+'</div>';});
+    h+='</div><button class="big" id="olRefresh">重新整理</button>';
+    $('onlineBox').innerHTML=h;
+    $('olRefresh').onclick=renderOnline;
+    $('onlineBox').querySelectorAll('[data-inv]').forEach(function(b){b.onclick=function(){
+      b.disabled=true;b.textContent='邀請中…';
+      Online.invite(b.getAttribute('data-inv')).then(function(room){toast('已邀請 '+b.getAttribute('data-n')+'，等待對方加入');Game.startFriend(room);}).catch(function(e){toast('邀請失敗：'+e.message);b.disabled=false;b.textContent='邀請對戰';});};});
+  }).catch(function(e){$('onlineBox').innerHTML='<div class="note">讀取失敗：'+esc(e.message)+'</div>';});
+}
+function showInvite(inv){
+  sheet('<h2>⚔️ 對戰邀請</h2><p style="font-size:18px"><b>'+esc(inv.fromName)+'</b> 邀請你下一盤象棋</p><div class="row"><button class="btn" id="invNo">婉拒</button><button class="btn primary" id="invYes">接受</button></div>');
+  $('invNo').onclick=function(){closeSheet();Online.clearInvite();};
+  $('invYes').onclick=function(){closeSheet();Online.clearInvite();if(!P.name)askName(function(){Game.startFriend(inv.room);});else Game.startFriend(inv.room);};
+}
+
 /* ----- rank / friend / profile (online parts in online.js) ----- */
 function renderRank(){
   if(!window.Online||!Online.ready){$('rankBox').innerHTML='<div class="note">英雄榜需要連線。'+esc(window.Online&&Online.reason||'')+'</div><div class="note sub">你的本機 Rating：'+P.rating+'</div>';return;}
@@ -204,7 +231,7 @@ function renderProfile(){
   $('profileBox').innerHTML='<div class="list"><button class="item" id="pName"><span class="t"><b>暱稱</b><small>'+(esc(P.name)||'未設定')+'</small></span><span class="badge">修改</span></button>'+
    '<button class="item" id="pExport"><span class="t"><b>複製最近一盤棋譜</b><small>貼給 Claude 可以深入講解</small></span><span class="badge">複製</span></button>'+
    '<button class="item" id="pReset"><span class="t"><b>清除本機資料</b><small>Rating、紀錄、課程進度</small></span><span class="badge">清除</span></button></div>'+
-   '<p class="foot">'+(window.Online&&Online.ready?'已連線（ID：'+Online.uid.slice(0,6)+'…）':esc(window.Online&&Online.reason||'離線模式'))+'</p>';
+   '<p class="foot">版本 '+APP_VERSION+'<br>'+(window.Online&&Online.ready?'已連線（ID：'+Online.uid.slice(0,6)+'…）':esc(window.Online&&Online.reason||'離線模式'))+'</p>';
   $('pName').onclick=function(){askName(renderProfile);};
   $('pExport').onclick=function(){var r=P.records[0];if(!r){toast('還沒有對局');return;}var t=recordText(r);try{navigator.clipboard.writeText(t).then(function(){toast('已複製棋譜');},function(){sheet('<h2>棋譜</h2><textarea>'+esc(t)+'</textarea>');});}catch(e){sheet('<h2>棋譜</h2><textarea>'+esc(t)+'</textarea>');}};
   $('pReset').onclick=function(){sheet('<h2>確定清除？</h2><p>本機的 Rating、紀錄與進度都會刪除（線上英雄榜不受影響）。</p><div class="row"><button class="btn" onclick="closeSheet()">取消</button><button class="btn primary" id="rsOk">清除</button></div>');$('rsOk').onclick=function(){localStorage.removeItem('xqdojo');localStorage.removeItem('xq-live');loadP();closeSheet();go('home');};};
