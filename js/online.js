@@ -1,5 +1,6 @@
 /* ===== online: Firebase (anonymous auth + Firestore) ===== */
-var Online={ready:false,uid:null,reason:''};
+var Online={ready:false,uid:null,reason:'',anon:true};
+Online.whenReady=new Promise(function(res){Online._ready=res;});
 (function(){
   var cfg=window.FIREBASE_CONFIG;
   if(!cfg||!cfg.apiKey){Online.reason='尚未設定 Firebase，目前為離線模式';return;}
@@ -7,16 +8,41 @@ var Online={ready:false,uid:null,reason:''};
   function refresh(){if(typeof curView!=='undefined'&&(curView==='home'||curView==='rank'||curView==='friend'))go(curView);}
   Promise.all([import(base+'firebase-app.js'),import(base+'firebase-auth.js'),import(base+'firebase-firestore.js')]).then(function(m){
     var app=m[0].initializeApp(cfg);authM=m[1];auth=authM.getAuth(app);fs=m[2];db=fs.getFirestore(app);
+    var started=false;
     authM.onAuthStateChanged(auth,function(u){
-      if(!u){authM.signInAnonymously(auth).catch(function(e){Online.reason='登入失敗：'+e.message;refresh();});return;}
-      Online.uid=u.uid;loadProfile().then(function(){Online.ready=true;Online.ping('idle');setInterval(function(){Online.ping();},60000);listenInvites();refresh();}).catch(function(e){Online.reason='讀取資料失敗：'+e.message;refresh();});
+      if(!u){Online.ready=false;authM.signInAnonymously(auth).catch(function(e){Online.reason='登入失敗：'+e.message;refresh();});return;}
+      if(Online.ready&&Online.uid===u.uid){Online.anon=u.isAnonymous;return;}
+      /* a different account on this browser: start from a clean local profile */
+      if(P.uid&&P.uid!==u.uid){var keep=P.setup;P=defaultProfile();P.setup=keep;}
+      P.uid=u.uid;Online.uid=u.uid;Online.anon=u.isAnonymous;
+      loadProfile().then(function(){Online.ready=true;Online.reason='';Online.ping('idle');
+        if(!started){started=true;setInterval(function(){Online.ping();},60000);}
+        listenInvites();Online._ready();refresh();}).catch(function(e){Online.reason='讀取資料失敗：'+e.message;refresh();});
     });
   }).catch(function(e){Online.reason='無法載入線上功能（請使用 GitHub 網址開啟）';refresh();});
 
   function uref(){return fs.doc(db,'users',Online.uid);}
+  /* ----- accounts: nickname + password (Firebase email/password under the hood) ----- */
+  function nameEmail(name){var b=new TextEncoder().encode(name),h='';b.forEach(function(x){h+=('0'+x.toString(16)).slice(-2);});return 'n'+h+'@xiangqi-dojo.app';}
+  function authErr(e){var c=(e&&e.code)||'';
+    if(c.indexOf('email-already-in-use')>=0||c.indexOf('credential-already-in-use')>=0)return '這個暱稱已經有人用了，請換一個';
+    if(c.indexOf('weak-password')>=0)return '密碼至少要 6 碼';
+    if(c.indexOf('invalid-credential')>=0||c.indexOf('wrong-password')>=0||c.indexOf('user-not-found')>=0||c.indexOf('invalid-login')>=0)return '暱稱或密碼不對';
+    if(c.indexOf('operation-not-allowed')>=0)return 'Firebase 尚未啟用「電子郵件/密碼」登入';
+    if(c.indexOf('too-many-requests')>=0)return '嘗試太多次，請稍後再試';
+    if(c.indexOf('network')>=0)return '網路連線失敗';
+    return (e&&e.message)||'發生錯誤';}
+  Online.nameBytesOk=function(name){return new TextEncoder().encode(name).length<=31;};
+  Online.register=function(name,pw){
+    var cred=authM.EmailAuthProvider.credential(nameEmail(name),pw);
+    return authM.linkWithCredential(auth.currentUser,cred).then(function(){Online.anon=false;P.name=name;saveP();Online.ping('idle');})
+      .catch(function(e){throw new Error(authErr(e));});
+  };
+  Online.login=function(name,pw){return authM.signInWithEmailAndPassword(auth,nameEmail(name),pw).catch(function(e){throw new Error(authErr(e));});};
+  Online.logout=function(){var keep=P.setup;P=defaultProfile();P.setup=keep;try{localStorage.setItem('xqdojo',JSON.stringify(P));}catch(e){}return authM.signOut(auth);};
   function loadProfile(){
     return fs.getDoc(uref()).then(function(s){
-      if(s.exists()){var d=s.data();['rating','games','wins','losses','draws'].forEach(function(k){if(typeof d[k]==='number')P[k]=d[k];});if(!P.name&&d.name)P.name=d.name;try{localStorage.setItem('xqdojo',JSON.stringify(P));}catch(e){}}
+      if(s.exists()){var d=s.data();['rating','games','wins','losses','draws'].forEach(function(k){if(typeof d[k]==='number')P[k]=d[k];});if(d.name)P.name=d.name;try{localStorage.setItem('xqdojo',JSON.stringify(P));}catch(e){}}
       else if(P.name)return fs.setDoc(uref(),pubProfile());
     });
   }

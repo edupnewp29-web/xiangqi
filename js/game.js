@@ -434,9 +434,9 @@ var Game=(function(){
     render();renderFriendPanel();
   }
   function renderFriendPanel(){
-    var r=G.roomData,h='',link=location.origin+location.pathname+'?room='+G.room;
+    var r=G.roomData,h='',link=location.origin+location.pathname+'?room='+G.room+'&openExternalBrowser=1';
     h+='<div class="note"><div class="hd">🔴 '+esc(r.redName||'等待加入')+' '+(r.redRating||'')+'　vs　⚫ '+esc(r.blackName||'等待加入')+' '+(r.blackRating||'')+'</div>'+(G.spectator?'<div class="sub">你正在觀戰</div>':'')+'</div>';
-    if(r.status==='waiting')h+='<div class="note warn"><div class="hd">把連結傳給朋友</div><div style="word-break:break-all;font-size:13px">'+esc(link)+'</div><div class="row"><button class="btn primary" id="cpLink">複製連結</button></div><div class="sub">朋友打開連結、輸入暱稱就會加入對局。</div></div>';
+    if(r.status==='waiting')h+='<div class="note warn"><div class="hd">把連結傳給朋友</div><div style="word-break:break-all;font-size:13px">'+esc(link)+'</div><div class="row"><button class="btn primary" id="cpLink">複製連結</button></div><div class="sub">朋友從 LINE 點連結，會自動用手機瀏覽器打開並加入對局。</div></div>';
     if(r.drawOffer&&r.drawOffer!==Online.uid&&r.status==='playing')h+='<div class="note"><div class="hd">對手提議和棋</div><div class="row"><button class="btn primary" id="accDraw">接受</button></div></div>';
     if(G.over)h+=endPanelHtml();
     h+='<div class="feed">'+feed.slice(0,30).map(function(n){return noteHtml(n);}).join('')+'</div>';
