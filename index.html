@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="象棋道場">
+<meta name="theme-color" content="#7a4a1f">
+<title>象棋道場</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="top">
+  <button id="backBtn" class="iconbtn" aria-label="返回">‹</button>
+  <h1 id="title">象棋道場</h1>
+  <span id="meChip"></span>
+</header>
+
+<main>
+  <!-- HOME -->
+  <section id="v-home" class="view">
+    <div class="profile-card" id="profileCard"></div>
+    <div class="grid">
+      <button class="card" data-go="setup"><b>⚔️ 對弈電腦</b><span>七級難度・教練模式</span></button>
+      <button class="card" data-go="friend"><b>🤝 好友對戰</b><span>傳連結即時對下</span></button>
+      <button class="card" data-go="lessons"><b>📘 我的課程</b><span id="lessonHint">程度測驗・個人化推薦</span></button>
+      <button class="card" data-go="puzzles"><b>🎯 殺法練習</b><span>二到四步殺</span></button>
+      <button class="card" data-go="classics"><b>📜 名局欣賞</b><span>逐步解說・猜下一步</span></button>
+      <button class="card" data-go="rank"><b>🏆 英雄榜</b><span>Rating 排行</span></button>
+      <button class="card" data-go="records"><b>📊 我的戰績</b><span>對局紀錄・弱點分析</span></button>
+      <button class="card" data-go="profile"><b>⚙️ 設定</b><span>暱稱・資料</span></button>
+    </div>
+    <p class="foot" id="onlineState"></p>
+  </section>
+
+  <!-- SETUP vs AI -->
+  <section id="v-setup" class="view">
+    <div class="panel">
+      <h3>難度</h3>
+      <div id="levelList" class="chips"></div>
+      <h3>執子</h3>
+      <div class="chips" id="sideChips">
+        <button class="chip on" data-side="0">我執紅（先走）</button>
+        <button class="chip" data-side="1">我執黑（後走）</button>
+      </div>
+      <h3>模式</h3>
+      <div class="chips" id="modeChips">
+        <button class="chip on" data-coach="1">🎓 教練模式<small>每步評分・威脅提醒・不計分</small></button>
+        <button class="chip" data-coach="0">🏅 正式對局<small>計入 Rating・不可悔棋提示</small></button>
+      </div>
+      <button class="big primary" id="startAI">開始對局</button>
+      <button class="big" id="resumeAI" style="display:none">繼續上一盤</button>
+    </div>
+  </section>
+
+  <!-- GAME (shared by all modes) -->
+  <section id="v-game" class="view">
+    <div id="status"><span id="msg"></span><span id="info"></span></div>
+    <div id="evalbar"><div id="evalfill"></div></div>
+    <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="movestrip"></div>
+    <div id="toolbar" class="row"></div>
+    <div id="panel"></div>
+  </section>
+
+  <!-- LISTS -->
+  <section id="v-lessons" class="view"><div id="lessonsBox"></div></section>
+  <section id="v-puzzles" class="view"><div id="puzzlesBox"></div></section>
+  <section id="v-classics" class="view"><div id="classicsBox"></div></section>
+  <section id="v-rank" class="view"><div id="rankBox"></div></section>
+  <section id="v-records" class="view"><div id="recordsBox"></div></section>
+  <section id="v-friend" class="view"><div id="friendBox"></div></section>
+  <section id="v-profile" class="view"><div id="profileBox"></div></section>
+  <section id="v-lesson" class="view"><div id="lessonBox"></div></section>
+</main>
+
+<div id="sheet" class="sheet"><div class="sheet-box" id="sheetBox"></div></div>
+<div id="toast"></div>
+
+<script src="js/firebase-config.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/coach.js"></script>
+<script src="js/board.js"></script>
+<script src="js/data-puzzles.js"></script>
+<script src="js/data-classics.js"></script>
+<script src="js/data-lessons.js"></script>
+<script src="js/app.js"></script>
+<script src="js/game.js"></script>
+<script src="js/online.js"></script>
+</body>
+</html>
