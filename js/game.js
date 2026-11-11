@@ -46,7 +46,7 @@ var Game=(function(){
   function renderStatus(){
     var m=G.mode;
     if(m==='ai'||m==='friend'){
-      if(G.over){var me=G.winner===G.player;setStatus(G.winner===-1?'和棋（'+(G.drawWhy||'')+'）':me?'🎉 你贏了！':(G.resigned?'你認輸了':'你輸了'),G.endInfo||'','over');}
+      if(G.over){var me=G.winner===G.player;setStatus(G.closed?'對局取消（對方已離開）':G.winner===-1?'和棋（'+(G.drawWhy||'')+'）':me?(G.leftWin?'🎉 對手離開，你獲勝':'🎉 你贏了！'):(G.leftWin?'你離開了對局（判負）':G.resigned?'你認輸了':'你輸了'),G.endInfo||'','over');}
       else if(G.thinking)setStatus(m==='ai'?'電腦思考中…':'等待對手…',G.coach?'教練：'+(G.coachBusy?'分析中':'待命'):'');
       else if(G.side===G.player)setStatus(inCheck(G.b,G.side)?'將軍！快應將':'輪到你下（'+sideName(G.player)+'）',G.coach?(G.coachBusy?'教練分析中…':''):(m==='friend'&&G.lat?'延遲 '+G.lat.toFixed(1)+' 秒':(G.rated?'正式對局':'')),inCheck(G.b,G.side)?'check':'');
       else setStatus(m==='friend'?'等待對手走棋…':'輪到電腦',m==='friend'&&G.lat?'延遲 '+G.lat.toFixed(1)+' 秒':'');
@@ -410,7 +410,7 @@ var Game=(function(){
   }
 
   /* ---------- friend (online) ---------- */
-  function stopFriend(){if(unsub){unsub();unsub=null;}}
+  function stopFriend(){if(unsub){unsub();unsub=null;}if(G&&G.mode==='friend'){if(G.awayT){clearInterval(G.awayT);G.awayT=null;}if(G.entered)Online.leaveRoom(G.room);}}
   function startFriend(id){
     aiEng.reset();coachEng.reset();stopFriend();
     G=newG('friend');G.room=id;G.roomStatus='loading';viewPly=null;feed=[];
@@ -420,6 +420,7 @@ var Game=(function(){
   }
   function onRoom(r,meta){
     if(!G||G.mode!=='friend')return;
+    if(r&&r.id&&r.id!==G.room)return;
     if(r&&meta&&!meta.pending&&G.sentAt&&r.moves&&r.moves.length===G.sentLen){G.lat=(performance.now()-G.sentAt)/1000;G.sentAt=0;}
     if(r&&meta&&meta.pending&&r.moves&&r.moves.length===G.moves.length&&r.status===G.roomStatus)return;
     if(!r){panel('<div class="note">找不到這個對局。</div>');return;}
@@ -427,17 +428,28 @@ var Game=(function(){
     if(r.status==='waiting'&&r.red!==uid&&r.black!==uid){Online.joinRoom(G.room).catch(function(e){toast('加入失敗：'+e.message);});return;}
     var player=r.red===uid?0:r.black===uid?1:-1;
     if(G.moves.length!==r.moves.length||G.player!==player){
-      var o=G;G=newG('friend');['room','tok'].forEach(function(k){G[k]=o[k];});r.moves.forEach(function(m){push(m);});G.over=false;G.winner=null;
+      var o=G;G=newG('friend');['room','tok','entered','startedNote','awayT','awaySince','awayLeft','lat','closed'].forEach(function(k){G[k]=o[k];});r.moves.forEach(function(m){push(m);});G.over=false;G.winner=null;
       if(r.moves.length>o.moves.length&&o.moves.length){var lb=posAt(r.moves.length-1),lm=r.moves[r.moves.length-1];if(((r.moves.length-1)%2)!==player)feed.unshift({ai:true,who:'對手',cn:moveToCN(lb.b,lm),desc:describeMove(lb.b,lm,r.moves.length-1),ply:r.moves.length-1});}
     }
     G.player=player<0?0:player;G.spectator=player<0;G.roomStatus=r.status;G.roomData=r;
-    if(r.status==='done'){G.over=true;G.winner=r.result==='red'?0:r.result==='black'?1:-1;G.resigned=r.reason==='resign'&&G.winner!==G.player;G.drawWhy=r.reason==='agreed'?'雙方同意':r.reason==='repeat'?'同一局面重複三次':'';friendEnd(r);}
+    if(!G.spectator&&!G.entered&&(r.status==='waiting'||r.status==='playing')){G.entered=true;Online.enterRoom(G.room);}
+    if(r.status==='playing'&&r.host===uid&&!G.startedNote){G.startedNote=true;Online.roomStarted(G.room);}
+    /* opponent presence (Realtime Database rooms) */
+    if(r.presence&&r.status==='playing'&&!G.spectator){
+      var opp=G.player===0?r.black:r.red,here=!!r.presence[opp];
+      if(!here&&!G.awayT){G.awaySince=Date.now();G.awayT=setInterval(checkAway,1000);}
+      if(here&&G.awayT){clearInterval(G.awayT);G.awayT=null;G.awayLeft=0;}
+    }else if(G.awayT){clearInterval(G.awayT);G.awayT=null;G.awayLeft=0;}
+    if(r.status==='closed'){G.over=true;G.winner=-1;G.drawWhy='對方已離開，對局取消';G.closed=true;}
+    if(r.status==='done'){G.over=true;G.winner=r.result==='red'?0:r.result==='black'?1:-1;G.resigned=r.reason==='resign'&&G.winner!==G.player;G.leftWin=r.reason==='left';G.drawWhy=r.reason==='agreed'?'雙方同意':r.reason==='repeat'?'同一局面重複三次':'';if(G.awayT){clearInterval(G.awayT);G.awayT=null;}friendEnd(r);}
     render();renderFriendPanel();
   }
   function renderFriendPanel(){
     var r=G.roomData,h='',link=location.origin+location.pathname+'?room='+G.room+'&openExternalBrowser=1';
     h+='<div class="note"><div class="hd">🔴 '+esc(r.redName||'等待加入')+' '+(r.redRating||'')+'　vs　⚫ '+esc(r.blackName||'等待加入')+' '+(r.blackRating||'')+'</div>'+(G.spectator?'<div class="sub">你正在觀戰</div>':'')+'</div>';
     if(r.status==='waiting')h+='<div class="note warn"><div class="hd">把連結傳給朋友</div><div style="word-break:break-all;font-size:13px">'+esc(link)+'</div><div class="row"><button class="btn primary" id="cpLink">複製連結</button></div><div class="sub">朋友從 LINE 點連結，會自動用手機瀏覽器打開並加入對局。</div></div>';
+    if(G.awayT&&G.awayLeft>0)h+='<div class="note warn"><div class="hd">⚠ 對手已離線</div><div>'+G.awayLeft+' 秒內沒回來，判定你獲勝。</div></div>';
+    if(G.closed)h+='<div class="note"><div class="hd">對方已離開，對局取消</div></div>';
     if(r.drawOffer&&r.drawOffer!==Online.uid&&r.status==='playing')h+='<div class="note"><div class="hd">對手提議和棋</div><div class="row"><button class="btn primary" id="accDraw">接受</button></div></div>';
     if(G.over)h+=endPanelHtml();
     h+='<div class="feed">'+feed.slice(0,30).map(function(n){return noteHtml(n);}).join('')+'</div>';
@@ -449,10 +461,16 @@ var Game=(function(){
     var len=G.moves.length,tok=G.tok;push(m);
     var end=null;if(G.over)end={result:G.winner===0?'red':G.winner===1?'black':'draw',reason:G.winner===-1?'repeat':'mate'};
     G.over=false;G.sentAt=performance.now();G.sentLen=len+1;render();
-    Online.sendMove(G.room,m,len,end,G.moves.slice()).catch(function(e){toast('送出失敗，重新同步：'+e.message);var id=G.room;startFriend(id);});
+    var t0=performance.now(),gg=G;Online.sendMove(G.room,m,len,end,G.moves.slice()).then(function(){gg.lat=(performance.now()-t0)/1000;if(G===gg)renderStatus();}).catch(function(e){toast('送出失敗，重新同步：'+e.message);var id=G.room;startFriend(id);});
+  }
+  function checkAway(){
+    if(!G||G.mode!=='friend'||!G.awayT)return;
+    var left=60-Math.floor((Date.now()-G.awaySince)/1000);G.awayLeft=left;
+    if(left<=0){clearInterval(G.awayT);G.awayT=null;Online.claimWin(G.room,G.player);return;}
+    renderFriendPanel();
   }
   function friendEnd(r){
-    if(G.spectator||P.friendDone&&P.friendDone[G.room])return;
+    if(G.spectator||G.closed||r.status==='closed'||P.friendDone&&P.friendDone[G.room])return;
     P.friendDone=P.friendDone||{};P.friendDone[G.room]=1;
     var score=G.winner===-1?0.5:G.winner===G.player?1:0,oppR=G.player===0?(r.blackRating||1200):(r.redRating||1200),delta=elo(P.rating,oppR,score,24);
     P.rating+=delta;G.endInfo='Rating '+(delta>=0?'+':'')+delta+' → '+P.rating;
@@ -460,7 +478,13 @@ var Game=(function(){
     addRecord(G.record);
   }
 
-  function leave(){
+  function leave(force){
+    if(!force&&G&&G.mode==='friend'&&!G.spectator&&!G.over&&G.room){
+      if(G.roomStatus==='playing'){
+        sheet('<h2>離開對局？</h2><p style="font-size:18px">對局還在進行，離開會判定你<b>認輸</b>。</p><div class="row"><button class="btn" onclick="closeSheet()">繼續下棋</button><button class="btn primary" id="lvY">認輸並離開</button></div>');
+        $('lvY').onclick=function(){closeSheet();var id=G.room;Online.resign(id).then(function(){leave(true);},function(){leave(true);});};return;}
+      else if(!G.roomData||G.roomData.host===Online.uid)Online.closeRoom(G.room);
+    }
     var m=G&&G.mode;aiEng.reset();coachEng.reset();stopFriend();if(G)G.tok=Math.random();
     if(m==='puzzle')go(PZ.placement?'lessons':'puzzles');else if(m==='replay')go('classics');else if(m==='review')go('records');else if(m==='friend')go('friend');
     else if(G&&G.lessonId)go('lessons');else go('home');

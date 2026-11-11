@@ -4,10 +4,16 @@ Online.whenReady=new Promise(function(res){Online._ready=res;});
 (function(){
   var cfg=window.FIREBASE_CONFIG;
   if(!cfg||!cfg.apiKey){Online.reason='尚未設定 Firebase，目前為離線模式';return;}
-  var V='10.12.2',base='https://www.gstatic.com/firebasejs/'+V+'/',fs,db,authM,auth;
+  var V='10.12.2',base='https://www.gstatic.com/firebasejs/'+V+'/',fs,db,authM,auth,dbm=null,rdb=null;
   function refresh(){if(typeof curView!=='undefined'&&(curView==='home'||curView==='rank'||curView==='friend'))go(curView);}
-  Promise.all([import(base+'firebase-app.js'),import(base+'firebase-auth.js'),import(base+'firebase-firestore.js')]).then(function(m){
+  var mods=[import(base+'firebase-app.js'),import(base+'firebase-auth.js'),import(base+'firebase-firestore.js')];
+  if(cfg.databaseURL)mods.push(import(base+'firebase-database.js'));
+  Promise.all(mods).then(function(m){
     var app=m[0].initializeApp(cfg);authM=m[1];auth=authM.getAuth(app);fs=m[2];db=fs.getFirestore(app);
+    if(m[3]){try{dbm=m[3];rdb=dbm.getDatabase(app);
+      /* use Realtime Database for rooms only if it really connects */
+      var probe=dbm.onValue(dbm.ref(rdb,'.info/connected'),function(s){if(s.val()===true){Online.rtdb=true;}});
+      setTimeout(function(){if(!Online.rtdb)console.warn('RTDB not reachable, rooms use Firestore');},6000);}catch(e){console.warn('rtdb',e.message);}}
     var started=false;
     authM.onAuthStateChanged(auth,function(u){
       if(!u){Online.ready=false;authM.signInAnonymously(auth).catch(function(e){Online.reason='登入失敗：'+e.message;refresh();});return;}
@@ -81,13 +87,13 @@ Online.whenReady=new Promise(function(res){Online._ready=res;});
 
   /* ----- rooms ----- */
   function rid(){var c='abcdefghjkmnpqrstuvwxyz23456789',s='';for(var i=0;i<8;i++)s+=c[Math.floor(Math.random()*c.length)];return s;}
-  Online.createRoom=function(side){
+  var fCreate=function(side){
     var id=rid(),me={uid:Online.uid,name:P.name,rating:P.rating};
     var d={host:Online.uid,red:side===0?me.uid:null,black:side===1?me.uid:null,redName:side===0?me.name:null,blackName:side===1?me.name:null,
       redRating:side===0?me.rating:null,blackRating:side===1?me.rating:null,moves:[],status:'waiting',drawOffer:null,created:fs.serverTimestamp(),updated:fs.serverTimestamp()};
     return fs.setDoc(fs.doc(db,'rooms',id),d).then(function(){return id;});
   };
-  Online.joinRoom=function(id){
+  var fJoin=function(id){
     var ref=fs.doc(db,'rooms',id);
     return fs.runTransaction(db,function(tx){return tx.get(ref).then(function(s){
       if(!s.exists())throw new Error('對局不存在');var r=s.data();
@@ -96,20 +102,78 @@ Online.whenReady=new Promise(function(res){Online._ready=res;});
       if(!r.red){up.red=Online.uid;up.redName=P.name;up.redRating=P.rating;}else if(!r.black){up.black=Online.uid;up.blackName=P.name;up.blackRating=P.rating;}else throw new Error('對局已滿');
       tx.update(ref,up);});});
   };
-  Online.watchRoom=function(id,cb,err){return fs.onSnapshot(fs.doc(db,'rooms',id),{includeMetadataChanges:true},function(s){cb(s.exists()?Object.assign({id:id},s.data()):null,{pending:s.metadata.hasPendingWrites,cache:s.metadata.fromCache});},err);};
+  var fWatch=function(id,cb,err){return fs.onSnapshot(fs.doc(db,'rooms',id),{includeMetadataChanges:true},function(s){cb(s.exists()?Object.assign({id:id},s.data()):null,{pending:s.metadata.hasPendingWrites,cache:s.metadata.fromCache});},err);};
   /* single direct write (no transaction): one network round trip */
-  Online.sendMove=function(id,m,len,end,all){
+  var fSend=function(id,m,len,end,all){
     var up={moves:all,drawOffer:null,updated:fs.serverTimestamp()};
     if(end){up.status='done';up.result=end.result;up.reason=end.reason;}
     return fs.updateDoc(fs.doc(db,'rooms',id),up);
   };
-  Online.resign=function(id){var ref=fs.doc(db,'rooms',id);
+  var fResign=function(id){var ref=fs.doc(db,'rooms',id);
     return fs.runTransaction(db,function(tx){return tx.get(ref).then(function(s){var r=s.data();if(r.status!=='playing')return;tx.update(ref,{status:'done',result:r.red===Online.uid?'black':'red',reason:'resign',updated:fs.serverTimestamp()});});});};
-  Online.offerDraw=function(id){return fs.updateDoc(fs.doc(db,'rooms',id),{drawOffer:Online.uid});};
-  Online.acceptDraw=function(id){return fs.updateDoc(fs.doc(db,'rooms',id),{status:'done',result:'draw',reason:'agreed',updated:fs.serverTimestamp()});};
-  Online.myRooms=function(){
+  var fOffer=function(id){return fs.updateDoc(fs.doc(db,'rooms',id),{drawOffer:Online.uid});};
+  var fAccept=function(id){return fs.updateDoc(fs.doc(db,'rooms',id),{status:'done',result:'draw',reason:'agreed',updated:fs.serverTimestamp()});};
+  var fMine=function(){
     var c=fs.collection(db,'rooms');
     return Promise.all([fs.getDocs(fs.query(c,fs.where('red','==',Online.uid))),fs.getDocs(fs.query(c,fs.where('black','==',Online.uid)))]).then(function(qs){
       var out=[],seen={};qs.forEach(function(q){q.forEach(function(d){if(seen[d.id])return;seen[d.id]=1;var x=d.data();x.id=d.id;if(x.status!=='done')out.push(x);});});return out;});
+  };
+
+  /* ----- Realtime Database rooms (low latency + presence) ----- */
+  function rr(p){return dbm.ref(rdb,p);}
+  function isR(id){return id&&id.charAt(0)==='R';}
+  function normMoves(mv){if(!mv)return [];if(Array.isArray(mv))return mv.filter(function(x){return x!=null;});return Object.keys(mv).map(Number).sort(function(a,b){return a-b;}).map(function(k){return mv[k];});}
+  function rCreate(side){
+    var id='R'+rid(),d={host:Online.uid,status:'waiting',created:dbm.serverTimestamp(),updated:dbm.serverTimestamp()};
+    if(side===0){d.red=Online.uid;d.redName=P.name;d.redRating=P.rating;}else{d.black=Online.uid;d.blackName=P.name;d.blackRating=P.rating;}
+    return dbm.set(rr('rooms/'+id),d).then(function(){dbm.onDisconnect(rr('rooms/'+id+'/status')).set('closed');return id;});
+  }
+  function rJoin(id){
+    var err='';
+    return dbm.runTransaction(rr('rooms/'+id),function(r){
+      if(!r)return r;
+      if(r.status!=='waiting'){err=r.status==='closed'?'對方已經離開了':'對局已開始';return;}
+      if(r.presence&&r.host&&!r.presence[r.host]){err='對方已經離開了';return;}
+      if(!r.red){r.red=Online.uid;r.redName=P.name;r.redRating=P.rating;}else if(!r.black){r.black=Online.uid;r.blackName=P.name;r.blackRating=P.rating;}else{err='對局已滿';return;}
+      r.status='playing';r.updated=Date.now();return r;
+    }).then(function(res){if(err)throw new Error(err);if(!res.snapshot.exists())throw new Error('對局不存在');});
+  }
+  function rWatch(id,cb,errf){
+    return dbm.onValue(rr('rooms/'+id),function(s){var v=s.val();if(!v){cb(null,{});return;}v.id=id;v.moves=normMoves(v.moves);v.presence=v.presence||{};cb(v,{rt:true});},errf);
+  }
+  function rSend(id,m,len,end){
+    var up={};up['moves/'+len]=m;up.drawOffer=null;up.updated=dbm.serverTimestamp();
+    if(end){up.status='done';up.result=end.result;up.reason=end.reason;}
+    return dbm.update(rr('rooms/'+id),up);
+  }
+  function rEnd(id,result,reason){return dbm.update(rr('rooms/'+id),{status:'done',result:result,reason:reason,updated:dbm.serverTimestamp()});}
+  function rMine(){
+    var q=function(f){return dbm.get(dbm.query(rr('rooms'),dbm.orderByChild(f),dbm.equalTo(Online.uid)));};
+    return Promise.all([q('red'),q('black')]).then(function(ss){var out=[],seen={},now=Date.now();
+      ss.forEach(function(s){s.forEach(function(c){var x=c.val();if(seen[c.key])return;seen[c.key]=1;x.id=c.key;x.moves=normMoves(x.moves);
+        var alive=x.presence&&Object.keys(x.presence).length>0,fresh=now-(x.updated||0)<6*3600*1000;
+        if((x.status==='waiting'||x.status==='playing')&&alive&&fresh)out.push(x);});});return out;});
+  }
+  var inRoom=null;
+  Online.enterRoom=function(id){if(!isR(id)||!Online.rtdb)return;inRoom=id;var p=rr('rooms/'+id+'/presence/'+Online.uid);dbm.set(p,true);dbm.onDisconnect(p).remove();};
+  Online.leaveRoom=function(id){if(!isR(id)||!dbm)return;var p=rr('rooms/'+id+'/presence/'+Online.uid);dbm.onDisconnect(p).cancel();dbm.remove(p);if(inRoom===id)inRoom=null;};
+  Online.roomStarted=function(id){if(isR(id)&&dbm)dbm.onDisconnect(rr('rooms/'+id+'/status')).cancel();};
+  Online.closeRoom=function(id){if(isR(id)&&dbm)return dbm.update(rr('rooms/'+id),{status:'closed'});return fs.updateDoc(fs.doc(db,'rooms',id),{status:'done',result:'draw',reason:'closed'}).catch(function(){});};
+  Online.claimWin=function(id,myColor){return isR(id)?rEnd(id,myColor===0?'red':'black','left'):Promise.resolve();};
+
+  /* ----- router: new rooms on RTDB when available; old Firestore rooms keep working ----- */
+  Online.createRoom=function(side){return Online.rtdb?rCreate(side):fCreate(side);};
+  Online.joinRoom=function(id){return isR(id)?rJoin(id):fJoin(id);};
+  Online.watchRoom=function(id,cb,err){return isR(id)?rWatch(id,cb,err):fWatch(id,cb,err);};
+  Online.sendMove=function(id,m,len,end,all){return isR(id)?rSend(id,m,len,end):fSend(id,m,len,end,all);};
+  Online.resign=function(id){
+    if(!isR(id))return fResign(id);
+    return dbm.get(rr('rooms/'+id)).then(function(s){var r=s.val();if(!r||r.status!=='playing')return;return rEnd(id,r.red===Online.uid?'black':'red','resign');});};
+  Online.offerDraw=function(id){return isR(id)?dbm.update(rr('rooms/'+id),{drawOffer:Online.uid}):fOffer(id);};
+  Online.acceptDraw=function(id){return isR(id)?rEnd(id,'draw','agreed'):fAccept(id);};
+  Online.myRooms=function(){
+    var fsP=fMine().then(function(l){var now=Date.now();return l.filter(function(x){var t=x.updated&&x.updated.toMillis?x.updated.toMillis():0;return now-t<2*3600*1000;});}).catch(function(){return [];});
+    var rP=Online.rtdb?rMine().catch(function(){return [];}):Promise.resolve([]);
+    return Promise.all([rP,fsP]).then(function(a){return a[0].concat(a[1]);});
   };
 })();

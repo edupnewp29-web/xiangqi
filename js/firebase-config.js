@@ -5,5 +5,6 @@ window.FIREBASE_CONFIG = {
   projectId: "xiangqi-ec1cf",
   storageBucket: "xiangqi-ec1cf.firebasestorage.app",
   messagingSenderId: "224131839053",
-  appId: "1:224131839053:web:fa169685de8ea5003dd804"
+  appId: "1:224131839053:web:fa169685de8ea5003dd804",
+  databaseURL: "https://xiangqi-ec1cf-default-rtdb.asia-southeast1.firebasedatabase.app"
 };
