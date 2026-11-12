@@ -86,13 +86,24 @@ var Game=(function(){
     if(!legalMoves(p.b,p.side).length){var r0={move:0,score:-MATE,pv:[],side:p.side,depth:0};g.evals[ply]=r0;return Promise.resolve(r0);}
     return coachEng.run({cmd:'think',board:p.b,side:p.side,opts:{time:time||COACH_T,analyze:true,history:g.hashes.slice(0,ply)}}).then(function(r){if(r){r.side=p.side;g.evals[ply]=r;}return r;});
   }
-  function makeNote(g,ply,e0,e1){
+  function pvExplain(b,side,pv,n){var bb=b.slice(),out=[];for(var i=0;i<pv.length&&i<n;i++){var m=pv[i];if(legalMoves(bb,side).indexOf(m)<0)break;out.push('<b>'+moveToCN(bb,m)+'</b>（'+describeMove(bb,m).join('，')+'）');applyMove(bb,m);side=1-side;}return out;}
+  function evalWords(s,who){var mi=mateIn(s);if(mi>0)return who+'有 '+mi+' 步殺';if(mi<0)return '對方有 '+(-mi)+' 步殺';if(s>300)return who+'大優';if(s>100)return who+'稍優';if(s>=-100)return '雙方均勢';if(s>=-300)return who+'稍落後';return who+'明顯落後';}
+  function makeNote(g,ply,e0,e1,alt){
     var p=posAt(ply,g),m=g.moves[ply],mover=p.side,s0=e0.score,s1=-e1.score;
     var loss=Math.max(0,s0-s1);
     if(mateIn(s0)>0&&mateIn(s1)>0)loss=mateIn(s1)<=mateIn(s0)?0:Math.min(loss,30);
     var isBest=m===e0.move,gr=gradeLoss(loss,isBest),cn=moveToCN(p.b,m),desc=describeMove(p.b,m,ply),lines=[],tags=[];
     var b1=p.b.slice();applyMove(b1,m);
-    if(!isBest&&loss>40&&e0.move){lines.push('較佳：<b>'+moveToCN(p.b,e0.move)+'</b>（'+describeMove(p.b,e0.move,ply).join('，')+'）');var bpv=pvToCN(p.b,mover,e0.pv,5);if(bpv.length>1)lines.push('變化：'+bpv.join(' '));}
+    var who=(g.mode==='review'||g.mode==='replay')&&mover!==g.player?sideName(mover)+'方':'你';
+    if(loss<=40&&!(mateIn(e1.score)>0)){
+      lines.push(isBest?'👍 這正是引擎認為<b>最好的一步</b>。':'👍 這步和最佳著差不多，是<b>好棋</b>。');
+      var plan=pvExplain(b1,1-mover,e1.pv,4);
+      if(plan.length)lines.push('預期變化：對方 '+plan[0]+(plan[1]?'，'+who+'接著 '+plan[1]:'')+(plan[2]?'，對方 '+plan[2]:'')+(plan[3]?'，'+who+' '+plan[3]:''));
+      if(alt&&alt.move&&alt.move!==m){var dd=s0-alt.score;lines.push('其他可行的走法：<b>'+moveToCN(p.b,alt.move)+'</b>（'+describeMove(p.b,alt.move,ply).join('，')+'）'+(dd>5?'，比這步差 '+(dd/100).toFixed(1):'，和這步差不多'));}
+    }
+    if(!isBest&&loss>40&&e0.move){lines.push('較佳：<b>'+moveToCN(p.b,e0.move)+'</b>（'+describeMove(p.b,e0.move,ply).join('，')+'）');
+      var bx=pvExplain(p.b,mover,e0.pv,4);if(bx.length>1)lines.push('為什麼較佳：'+bx.join(' → '));}
+    lines.push('局勢：'+evalWords(s0,who)+' → '+evalWords(s1,who));
     if(mateIn(e1.score)>0&&e1.pv.length)lines.push('⚠ 這步之後對方有 <b>'+mateIn(e1.score)+' 步殺</b>：'+pvToCN(b1,1-mover,e1.pv,7).join(' '));
     else if(loss>100&&e1.pv.length)lines.push('後果：對方可以 <b>'+pvToCN(b1,1-mover,e1.pv,3).join(' ')+'</b>（'+describeMove(b1,e1.pv[0]).join('，')+'）');
     if(mateIn(s0)>0&&!(mateIn(s1)>0)&&e0.pv.length)lines.push('錯過了 <b>'+mateIn(s0)+' 步殺</b>：'+pvToCN(p.b,mover,e0.pv,7).join(' '));
@@ -107,7 +118,7 @@ var Game=(function(){
   }
   function noteHtml(n,mine){
     if(n.ai)return '<div class="note ai"><div class="hd">🤖 '+(n.who||'電腦')+'：'+n.cn+'</div><div class="sub">'+n.desc.join('，')+'</div></div>';
-    if(n.hint)return '<div class="note"><div class="hd">💡 提示：'+n.cn+'</div><div class="sub">'+n.desc.join('，')+'</div></div>';
+    if(n.hint)return '<div class="note"><div class="hd">💡 提示：'+n.cn+'</div><div class="sub">'+n.desc.join('，')+'</div>'+(n.lines||[]).map(function(l){return '<div>'+l+'</div>';}).join('')+'</div>';
     return '<div class="note'+(n.loss>100?' warn':'')+'"><div class="hd"><span class="tag" style="background:'+n.gr.c+'">'+n.gr.t+'</span>'+(mine===false?sideName(n.mover)+'：':'你：')+n.cn+'</div><div class="sub">'+n.desc.join('，')+(n.loss>10?'（損失 '+(n.loss>=MATE-300?'致命':(n.loss/100).toFixed(1))+'）':'')+'</div>'+
       n.lines.map(function(l){return '<div>'+l+'</div>';}).join('')+(n.best&&n.loss>40?'<button data-show="'+n.ply+'">在棋盤上看</button>':'')+'</div>';
   }
@@ -176,15 +187,36 @@ var Game=(function(){
     if(G.coach){
       var ph={ply:ply,pending:true,cn:moveToCN(posAt(ply).b,m),desc:['教練分析中…'],gr:{t:'…',c:'#999'},lines:[],loss:0};feed.unshift(ph);
       G.coachBusy=true;
-      analyze(ply).then(function(e0){if(!e0||stale(tok))return null;return analyze(ply+1).then(function(e1){
-        if(!e1||stale(tok))return;var n=makeNote(g,ply,e0,e1);g.notes[ply]=n;var i=feed.indexOf(ph);if(i>=0)feed[i]=n;G.coachBusy=false;render();renderAIPanel();});});
+      analyze(ply).then(function(e0){if(!e0||stale(tok))return null;
+        var pb=posAt(ply,g),altP=e0.move===m?coachEng.run({cmd:'think',board:pb.b,side:pb.side,opts:{time:600,analyze:true,exclude:[m],history:g.hashes.slice(0,ply)}}):Promise.resolve(null);
+        return altP.then(function(alt){if(stale(tok))return;return analyze(ply+1).then(function(e1){
+        if(!e1||stale(tok))return;var n=makeNote(g,ply,e0,e1,alt);g.notes[ply]=n;var i=feed.indexOf(ph);if(i>=0)feed[i]=n;G.coachBusy=false;render();renderAIPanel();});});});
     }
     afterAIMove();
   }
   function aiTurn(){
     G.thinking=true;render();
     var lv=LEVELS[G.level],tok=G.tok;
-    aiEng.run({cmd:'think',board:G.b.slice(),side:G.side,opts:{maxDepth:lv.maxDepth,time:lv.time,noise:lv.noise,history:G.hashes.slice(0,-1)}}).then(function(r){
+    var b0=G.b.slice(),sd=G.side,hist=G.hashes.slice(0,-1),plyNow=G.moves.length;
+    var pick,book=null;
+    if(lv.noise===0&&plyNow<=1&&!G.startFen){
+      var redB=['炮二平五','炮二平五','炮二平五','炮八平五','兵七進一','兵七進一','兵三進一','馬二進三','馬八進七','相三進五','相七進五'];
+      var cen=plyNow===1&&(G.b.slice(63,72).indexOf(CANNON)===4);
+      var blkB=cen?['馬8進7','馬8進7','馬2進3','炮8平5','炮2平5','卒7進1','卒3進1']:['卒7進1','卒3進1','馬8進7','馬2進3','炮8平5','炮2平5','象3進5','象7進5'];
+      var list=plyNow===0?redB:blkB;for(var tries=0;tries<6&&!book;tries++){book=cnToMove(G.b,G.side,list[Math.floor(Math.random()*list.length)])||null;}
+    }
+    if(book)pick=new Promise(function(res){setTimeout(function(){res({move:book,score:0});},500);});
+    else if(lv.noise>0)pick=aiEng.run({cmd:'think',board:b0,side:sd,opts:{maxDepth:lv.maxDepth,time:lv.time,noise:lv.noise,history:hist}});
+    else{
+      /* variety: also find the 2nd-best move; if it is nearly as good, sometimes play it */
+      var margin=[0,0,40,30,25,20,15][G.level]*(plyNow<20?2:1);
+      pick=aiEng.run({cmd:'think',board:b0,side:sd,opts:{maxDepth:lv.maxDepth,time:Math.round(lv.time*0.65),history:hist}}).then(function(r1){
+        if(!r1||stale(tok)||!r1.move||Math.abs(r1.score)>MATE-300)return r1;
+        return aiEng.run({cmd:'think',board:b0,side:sd,opts:{maxDepth:lv.maxDepth,time:Math.round(lv.time*0.35),history:hist,exclude:[r1.move]}}).then(function(r2){
+          if(r2&&r2.move&&r1.score-r2.score<=margin&&Math.random()<0.45)return r2;return r1;});
+      });
+    }
+    pick.then(function(r){
       if(!r||stale(tok))return;G.thinking=false;
       var ply=G.moves.length;feed.unshift({ai:true,cn:moveToCN(G.b,r.move),desc:describeMove(G.b,r.move,ply),ply:ply});
       push(r.move);afterAIMove();
@@ -200,7 +232,7 @@ var Game=(function(){
   }
   function hint(){
     if(G.side!==G.player||G.over)return;G.helped=true;var tok=G.tok,ply=G.moves.length;toast('教練思考中…');
-    analyze(ply).then(function(e){if(!e||stale(tok)||G.moves.length!==ply)return;G.arrows=[{m:e.move,color:'g'}];feed.unshift({hint:true,cn:moveToCN(G.b,e.move),desc:describeMove(G.b,e.move,ply),ply:ply});render();renderAIPanel();});
+    analyze(ply).then(function(e){if(!e||stale(tok)||G.moves.length!==ply)return;G.arrows=[{m:e.move,color:'g'}];var px=pvExplain(G.b,G.side,e.pv,4);feed.unshift({hint:true,cn:moveToCN(G.b,e.move),desc:describeMove(G.b,e.move,ply),lines:px.length>1?['後續計畫：'+px.join(' → '),'局勢：'+evalWords(e.score,'你')]:[],ply:ply});render();renderAIPanel();});
   }
   function resign(){
     if(G.over)return;
