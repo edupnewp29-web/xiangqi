@@ -3,7 +3,7 @@ var Game=(function(){
   var bv=new BoardView($('board'),onTap);
   var G=null,feed=[],viewPly=null,unsub=null;
 
-  function newG(mode,fen){var st=fen?parseFen(fen):{board:INIT.slice(),side:0};
+  function newG(mode,fen){A=null;var st=fen?parseFen(fen):{board:INIT.slice(),side:0};
     return {mode:mode,startFen:fen||null,start:st.board.slice(),startSide:st.side,b:st.board.slice(),side:st.side,moves:[],hashes:[hashBoard(st.board,st.side)[0]],
       player:st.side,over:false,winner:null,evals:{},notes:{},tok:Math.random(),sel:-1,targets:[],arrows:[],helped:false};}
   function posAt(ply,g){g=g||G;var b=g.start.slice(),s=g.startSide;for(var i=0;i<ply;i++){applyMove(b,g.moves[i]);s=1-s;}return {b:b,side:s};}
@@ -21,6 +21,7 @@ var Game=(function(){
   function render(){
     if(!G)return;
     var gv=$('gameVer');if(gv)gv.textContent='象棋道場 '+APP_VERSION+'（'+APP_DATE+' 更新）';
+    if(A){renderAnaBoard();return;}
     bv.flip=G.player===1;
     var ply=viewPly===null?G.moves.length:viewPly,pos=viewPly===null?{b:G.b,side:G.side}:posAt(viewPly);
     var arrows=G.arrows.slice();
@@ -33,7 +34,9 @@ var Game=(function(){
     for(var i=0;i<G.moves.length;i++){var cn=moveToCN(b,G.moves[i]);applyMove(b,G.moves[i]);var nt=G.notes[i],dot=nt&&nt.gr?'<i class="g" style="background:'+nt.gr.c+'"></i>':'';
       h+='<span data-p="'+(i+1)+'" class="'+(i+1===cur?'cur':'')+'">'+((i+G.startSide)%2===0?(Math.floor((i+G.startSide)/2)+1)+'.':'')+cn+dot+'</span>';}
     var el=$('movestrip');el.innerHTML=h;
-    el.querySelectorAll('[data-p]').forEach(function(s){s.onclick=function(){if(G.mode==='review'||G.mode==='replay'||G.over){setView(+s.getAttribute('data-p'));}};});
+    el.querySelectorAll('[data-p]').forEach(function(s){s.onclick=function(){var k=+s.getAttribute('data-p');
+      if(G.mode==='ai'&&!G.over){openAnalysis(k-1,null,1);return;}
+      if(G.mode==='review'||G.mode==='replay'||G.over){setView(k);}};});
     var c=el.querySelector('.cur');if(c)c.scrollIntoView({inline:'center',block:'nearest'});else el.scrollLeft=el.scrollWidth;
   }
   function renderEval(ply){
@@ -62,6 +65,7 @@ var Game=(function(){
   /* ---------- tap handling ---------- */
   function onTap(sq){
     if(!G)return;
+    if(A)return anaTap(sq);
     if(G.mode==='replay'){if(G.guess)return guessTap(sq);return;}
     if(viewPly!==null||G.over||G.thinking||G.busy)return;
     if(G.mode==='friend'&&(G.player<0||G.roomStatus!=='playing'))return;
@@ -114,20 +118,114 @@ var Game=(function(){
       else{var rp=e1.pv[0];if(rp&&b1[rp&127]&&VALS[b1[rp&127]&7]>=200)tags.push('hanging');else if(e0.move&&p.b[e0.move&127]&&VALS[p.b[e0.move&127]&7]>=200)tags.push('missed-win');}
       tags.push(ply<20?'opening':majorsCount(p.b)<=4?'endgame':'middlegame');
     }
-    return {ply:ply,mover:mover,cn:cn,desc:desc,gr:gr,loss:loss,lines:lines,tags:tags,best:e0.move,reply:e1.pv[0]||0};
+    return {ply:ply,mover:mover,cn:cn,desc:desc,gr:gr,loss:loss,lines:lines,tags:tags,best:e0.move,reply:e1.pv[0]||0,bestPv:(e0.pv||[]).slice(0,12),youPv:[m].concat((e1.pv||[]).slice(0,11))};
   }
   function noteHtml(n,mine){
     if(n.ai)return '<div class="note ai"><div class="hd">🤖 '+(n.who||'電腦')+'：'+n.cn+'</div><div class="sub">'+n.desc.join('，')+'</div></div>';
     if(n.hint)return '<div class="note"><div class="hd">💡 提示：'+n.cn+'</div><div class="sub">'+n.desc.join('，')+'</div>'+(n.lines||[]).map(function(l){return '<div>'+l+'</div>';}).join('')+'</div>';
     return '<div class="note'+(n.loss>100?' warn':'')+'"><div class="hd"><span class="tag" style="background:'+n.gr.c+'">'+n.gr.t+'</span>'+(mine===false?sideName(n.mover)+'：':'你：')+n.cn+'</div><div class="sub">'+n.desc.join('，')+(n.loss>10?'（損失 '+(n.loss>=MATE-300?'致命':(n.loss/100).toFixed(1))+'）':'')+'</div>'+
-      n.lines.map(function(l){return '<div>'+l+'</div>';}).join('')+(n.best&&n.loss>40?'<button data-show="'+n.ply+'">在棋盤上看</button>':'')+'</div>';
+      n.lines.map(function(l){return '<div>'+l+'</div>';}).join('')+(n.best?'<button data-show="'+n.ply+'">🔍 在棋盤上看所有變化</button>':'')+'</div>';
   }
   function bindShow(root){(root||$('panel')).querySelectorAll('[data-show]').forEach(function(b){b.onclick=function(){showNoteOnBoard(+b.getAttribute('data-show'));};});}
-  function showNoteOnBoard(ply){
-    var n=G.notes[ply];if(!n)return;viewPly=ply;
-    G.arrows=[{m:G.moves[ply],color:'b',label:'你'},{m:n.best,color:'g',label:'佳'}];
+  function showNoteOnBoard(ply){openAnalysis(ply,null,0);}
+
+  /* ---------- variation explorer (mid-game analysis) ---------- */
+  var A=null;
+  function openAnalysis(ply,lines,sel){
+    if(!G)return;var n=G.notes[ply];
+    if(!lines){lines=[];
+      if(n&&n.bestPv&&n.bestPv.length&&n.best!==G.moves[ply])lines.push({name:'較佳變化',moves:n.bestPv});
+      if(n&&n.youPv)lines.push({name:G.mode==='review'&&n.mover!==G.player?'實際走法＋後續':'你的走法＋後續',moves:n.youPv});
+      lines.push({name:'實際對局',moves:G.moves.slice(ply)});
+      if(sel===1)sel=lines.length-1;
+    }
+    var p=posAt(ply);
+    A={ply:ply,b0:p.b,s0:p.side,lines:lines,li:Math.min(sel||0,lines.length-1),cur:0,ev:{},sel:-1,targets:[],busy:false};
+    A.line=A.lines[A.li].moves.slice();
+    /* reuse the coach's own analysis so explanations stay consistent */
+    for(var j=ply;j<=G.moves.length;j++){var ej=G.evals[j];if(ej){var pj=posAt(j);A.ev[toFen(pj.b,pj.side)]=ej;}}
+    if(sel===1||(lines.length===1))A.cur=Math.min(1,A.line.length);
+    viewPly=null;tools(anaTools());render();renderAna();window.scrollTo({top:0,behavior:'smooth'});
+  }
+  function closeAnalysis(){
+    A=null;G.arrows=[];
+    if(G.mode==='review'){tools(navTools());render();renderReview();}
+    else if(G.mode==='ai'){tools(aiTools());render();renderAIPanel();}
+    else render();
+  }
+  function anaTools(){return [{t:'⏮',f:function(){anaGo(0);}},{t:'◀',f:function(){anaGo(A.cur-1);}},{t:'▶',f:function(){anaGo(A.cur+1);}},{t:'⏭',f:function(){anaGo(A.line.length);}},{t:'返回',p:1,f:closeAnalysis}];}
+  function anaPos(k){var b=A.b0.slice(),s=A.s0;for(var i=0;i<k&&i<A.line.length;i++){applyMove(b,A.line[i]);s=1-s;}return {b:b,side:s};}
+  function anaGo(k){
+    if(!A)return;
+    if(k>A.line.length){anaExtend();return;}
+    A.cur=Math.max(0,k);A.sel=-1;A.targets=[];render();renderAna();
+  }
+  /* at the end of a line: let the engine play the next move */
+  function anaExtend(){
+    var a=A,pos=anaPos(a.line.length);if(!legalMoves(pos.b,pos.side).length){toast('棋局已結束');return;}
+    a.busy=true;renderAna();
+    anaEval(a.line.length).then(function(e){if(A!==a)return;a.busy=false;if(e&&e.move){a.line.push(e.move);a.cur=a.line.length;}render();renderAna();});
+  }
+  function anaKey(k){var p=anaPos(k);return toFen(p.b,p.side);}
+  function anaEval(k){
+    var a=A,key=anaKey(k);if(a.ev[key])return Promise.resolve(a.ev[key]);
+    var p=anaPos(k);
+    if(!legalMoves(p.b,p.side).length){var r0={move:0,score:-MATE,pv:[],side:p.side};a.ev[key]=r0;return Promise.resolve(r0);}
+    return coachEng.run({cmd:'think',board:p.b,side:p.side,opts:{time:800,analyze:true}}).then(function(r){if(r){r.side=p.side;a.ev[key]=r;}return r;});
+  }
+  function anaTap(sq){
+    var pos=anaPos(A.cur);
+    var hit=A.targets.filter(function(m){return (m&127)===sq;});
+    if(hit.length){var m=hit[0];A.sel=-1;A.targets=[];
+      if(A.line[A.cur]===m){anaGo(A.cur+1);return;}
+      /* new branch: user's own move, then engine predicts the continuation */
+      var a=A;a.line=a.line.slice(0,a.cur).concat([m]);a.cur++;a.custom=true;a.busy=true;render();renderAna();
+      anaEval(a.cur).then(function(e){if(A!==a)return;a.busy=false;
+        if(e&&e.pv&&a.line.length===a.cur){var pb=anaPos(a.cur),bb=pb.b.slice(),sd=pb.side,ok=[];
+          for(var i=0;i<e.pv.length&&i<8;i++){if(legalMoves(bb,sd).indexOf(e.pv[i])<0)break;ok.push(e.pv[i]);applyMove(bb,e.pv[i]);sd=1-sd;}
+          a.line=a.line.concat(ok);}
+        render();renderAna();});
+      return;}
+    var q=pos.b[sq];
+    if(q&&(q>>3)===pos.side&&sq!==A.sel){A.sel=sq;A.targets=legalMoves(pos.b,pos.side).filter(function(m){return (m>>7)===sq;});}
+    else{A.sel=-1;A.targets=[];}
     render();
-    if(G.mode!=='review'){toast('藍＝你走的、綠＝較佳；點「回到現在」繼續');tools(aiTools(true));}
+  }
+  function renderAnaBoard(){
+    bv.flip=G.player===1;
+    var pos=anaPos(A.cur),arrows=[];
+    if(A.cur<A.line.length)arrows.push({m:A.line[A.cur],color:'g',label:'下'});
+    bv.render({board:pos.b,side:pos.side,sel:A.sel,targets:A.targets,last:A.cur>0?A.line[A.cur-1]:0,arrows:arrows,check:inCheck(pos.b,pos.side)});
+    /* strip shows the explored line */
+    var b=A.b0.slice(),s=A.s0,h='<span data-a="0" class="'+(A.cur===0?'cur':'')+'">起點</span>';
+    for(var i=0;i<A.line.length;i++){var cn=moveToCN(b,A.line[i]);applyMove(b,A.line[i]);
+      h+='<span data-a="'+(i+1)+'" class="'+(i+1===A.cur?'cur':'')+'">'+(s===G.player?'你 ':'')+cn+'</span>';s=1-s;}
+    var el=$('movestrip');el.innerHTML=h;
+    el.querySelectorAll('[data-a]').forEach(function(x){x.onclick=function(){anaGo(+x.getAttribute('data-a'));};});
+    var c=el.querySelector('.cur');if(c)c.scrollIntoView({inline:'center',block:'nearest'});
+    var live=G.mode==='ai'&&!G.over?(G.thinking?'對局：電腦思考中':G.side===G.player?'對局：輪到你':''):'';
+    setStatus('🔍 變化探索（'+(A.cur?'第 '+A.cur+' 步':'起點')+'）',live);
+    var e=A.ev[anaKey(A.cur)],bar=$('evalbar');
+    if(e){bar.style.display='block';var red=e.side===0?e.score:-e.score;if(Math.abs(red)>MATE-300)red=red>0?2000:-2000;$('evalfill').style.width=(100/(1+Math.exp(-red/250)))+'%';}
+  }
+  function renderAna(){
+    if(!A)return;var a=A,k=a.cur,pos=anaPos(k),h='';
+    h+='<div class="note"><div class="hd">🔍 變化探索</div><div class="chips" style="margin-top:6px">'+a.lines.map(function(l,i){return '<button class="chip'+(i===a.li&&!a.custom?' on':'')+'" data-li="'+i+'">'+l.name+'</button>';}).join('')+(a.custom?'<button class="chip on">自己走的變化</button>':'')+'</div>'+
+      '<div class="sub" style="margin-top:8px">用 ◀ ▶ 一步步看，或點下方棋譜跳到某一步。<b>也可以直接點棋子自己走</b>（紅黑都可以），電腦會接著預測後續。</div></div>';
+    if(k>0){var pb=anaPos(k-1),m=a.line[k-1];
+      h+='<div class="note"><div class="hd">第 '+k+' 步　'+sideName(pb.side)+(pb.side===G.player?'（你）':'')+'：'+moveToCN(pb.b,m)+'</div><div>'+describeMove(pb.b,m).join('，')+'</div></div>';}
+    else h+='<div class="note"><div class="hd">起點局面</div><div class="sub">輪到'+sideName(pos.side)+'方走。</div></div>';
+    var e=a.ev[anaKey(k)];
+    if(e){var ps=e.side===G.player?e.score:-e.score;
+      h+='<div class="note"><div><b>局勢：</b>'+evalWords(ps,'你')+'</div>'+(e.move?'<div><b>這裡最好的走法：</b>'+pvExplain(pos.b,pos.side,[e.move],1)[0]+'</div>':'')+
+        (e.pv&&e.pv.length>1?'<div class="sub">引擎預期：'+pvToCN(pos.b,pos.side,e.pv,6).join(' ')+'</div>':'')+'</div>';}
+    else if(legalMoves(pos.b,pos.side).length)h+='<div class="note sub">分析這個局面中…</div>';
+    else h+='<div class="note"><div class="hd">'+(inCheck(pos.b,pos.side)?'將死！':'困斃！')+sideName(1-pos.side)+'方勝</div></div>';
+    if(k===a.line.length&&legalMoves(pos.b,pos.side).length)h+='<div class="note sub">已到這條變化的最後一步。按 ▶ 讓電腦再走一步，或自己點棋子走走看。</div>';
+    if(a.busy)h+='<div class="note sub">電腦思考中…</div>';
+    panel(h);
+    $('panel').querySelectorAll('[data-li]').forEach(function(b){b.onclick=function(){var i=+b.getAttribute('data-li');a.li=i;a.custom=false;a.line=a.lines[i].moves.slice();a.cur=Math.min(1,a.line.length);a.sel=-1;a.targets=[];render();renderAna();};});
+    if(!e&&legalMoves(pos.b,pos.side).length){anaEval(k).then(function(){if(A===a&&a.cur===k){render();renderAna();}});}
   }
 
   /* ---------- vs AI ---------- */
@@ -154,6 +252,7 @@ var Game=(function(){
     if(G.side!==G.player)aiTurn();else playerTurn();
   }
   function renderAIPanel(){
+    if(A)return;
     var h='';
     if(G.threat&&G.showThreat&&!G.over)h+='<div class="note warn"><div class="hd">⚠ 對方威脅</div><div>'+G.threat.text+'</div></div>';
     if(G.mateHint&&!G.over)h+='<div class="note"><div class="hd">🎯 這個局面你有 '+G.mateHint+' 步殺，找找看！</div></div>';
@@ -281,7 +380,7 @@ var Game=(function(){
     if(G.mode==='replay'){G.sel=-1;G.targets=[];renderReplay();}
     render();}
   function renderReview(){
-    if(G.reviewBusy)return;
+    if(G.reviewBusy||A)return;
     var n=G.moves.length,me=G.player,pts=[],cnt={best:0,good:0,dubious:0,mistake:0,blunder:0};
     for(var i=0;i<=n;i++){var e=G.evals[i];if(!e)continue;var red=e.side===0?e.score:-e.score;if(Math.abs(red)>MATE-300)red=red>0?1000:-1000;red=Math.max(-1000,Math.min(1000,red));pts.push((i/n*300).toFixed(1)+','+(45-red/1000*42).toFixed(1));}
     var mist=[];for(i=0;i<n;i++){var nt=G.notes[i];if(nt&&nt.mover===me){cnt[nt.gr.g]++;if(nt.loss>=100)mist.push(nt);}}
@@ -297,7 +396,7 @@ var Game=(function(){
     var tg={};mist.forEach(function(m){m.tags.forEach(function(t){if(WEAK_LABEL[t])tg[t]=(tg[t]||0)+1;});});
     if(Object.keys(tg).length)h+='<div class="note"><div class="hd">這盤的弱點</div><div class="sub">'+Object.keys(tg).map(function(t){return WEAK_LABEL[t]+' ×'+tg[t];}).join('、')+'</div><button id="goLessons">看推薦課程</button></div>';
     panel(h);
-    $('panel').querySelectorAll('[data-jump]').forEach(function(b){b.onclick=function(){var p=+b.getAttribute('data-jump');viewPly=p;var nt=G.notes[p];G.arrows=[{m:G.moves[p],color:'b',label:'你'},{m:nt.best,color:'g',label:'佳'}];render();renderReview();window.scrollTo({top:0,behavior:'smooth'});};});
+    $('panel').querySelectorAll('[data-jump]').forEach(function(b){b.onclick=function(){openAnalysis(+b.getAttribute('data-jump'),null,0);};});
     $('panel').querySelectorAll('[data-redo]').forEach(function(b){b.onclick=function(){var p=+b.getAttribute('data-redo'),pos=posAt(p);startAI({level:G.rec.level!=null?G.rec.level:3,player:G.player,coach:true,fen:toFen(pos.b,pos.side),label:'從失誤處重下'});};});
     var gl=$('goLessons');if(gl)gl.onclick=function(){go('lessons');};
     bindShow();
@@ -517,7 +616,7 @@ var Game=(function(){
         $('lvY').onclick=function(){closeSheet();var id=G.room;Online.resign(id).then(function(){leave(true);},function(){leave(true);});};return;}
       else if(!G.roomData||G.roomData.host===Online.uid)Online.closeRoom(G.room);
     }
-    var m=G&&G.mode;aiEng.reset();coachEng.reset();stopFriend();if(G)G.tok=Math.random();
+    A=null;var m=G&&G.mode;aiEng.reset();coachEng.reset();stopFriend();if(G)G.tok=Math.random();
     if(m==='puzzle')go(PZ.placement?'lessons':'puzzles');else if(m==='replay')go('classics');else if(m==='review')go('records');else if(m==='friend')go('friend');
     else if(G&&G.lessonId)go('lessons');else go('home');
   }

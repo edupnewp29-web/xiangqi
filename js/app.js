@@ -1,5 +1,5 @@
 /* ===== app core: storage, router, engine client, list screens ===== */
-var APP_VERSION='v1.6',APP_DATE='2026-11-12';
+var APP_VERSION='v1.7',APP_DATE='2026-11-12';
 var $=function(id){return document.getElementById(id);};
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function toast(t){var el=$('toast');el.textContent=t;el.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(function(){el.classList.remove('on');},2200);}
